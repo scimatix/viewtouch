@@ -54,6 +54,8 @@
 #define TEXT_DATA_DIR        "text"
 #define UPDATES_DATA_DIR     "updates"
 
+#define TYPESTR_INFO		 "----"
+#define TYPESTR_ERROR		 "!!!!"
 
 /**** Types ****/
 typedef void (* TimeOutFn)();
@@ -127,6 +129,8 @@ int RestartSystem();                 // Sets up a system where ViewTouch will be
 int KillTask(const char* name);            // kills all tasks matching name
 int ReportError(const char* message);      // error logging & reporting function
 int ReportLoader(const char* message);     // gives a message to the loader program if it is still active
+char* FormatPrintLine(int error, const char* message);
+
 
 char* PriceFormat(Settings *s, int price, int use_sign, int use_comma,
                   genericChar* buffer = NULL); // formats price into string
@@ -136,6 +140,9 @@ int ParsePrice(const char* source, int *val = NULL); // returns price value from
 // (i.e. information specific to all pos systems)
 int LoadSystemData();
 int SaveSystemData();
+
+char* FilenameToPath(const char* filename);
+
 
 // Load/Save application pages
 // (i.e. information specific to a store chain)

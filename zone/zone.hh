@@ -383,6 +383,10 @@ public:
     int ChangeItemName(const char* old_name, const genericChar* new_name);
 
     int PrintZoneDB(const char* dest = NULL, int brief = 0);  // for debugging only
+	
+	int LoadSystemPages(InputDataFile &df, int zone_version, int zone_count);
+	int LoadPagesFromFile(const char* filename);
+	
 };
 
 #endif

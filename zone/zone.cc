@@ -930,12 +930,12 @@ int Page::IsZoneOnPage(Zone *z)
         while (zz)
         {
             if (zz == z)
-                return 1;  // True
+                return 1;  // true
             zz = zz->next;
         }
         p = p->parent_page;
     }
-    return 0;  // False
+    return 0;  // false
 }
 
 int Page::Update(Terminal *t, int update_message, const genericChar* value)
@@ -1074,26 +1074,40 @@ int ZoneDB::Load(const char* filename)
         Page *currPage = NewPosPage();
         if (currPage)
 		{
-			if (currPage->Read(infile, version))
+			int read_result = currPage->Read(infile, version);
+			if (read_result) // Did read fail?
 			{
 				sprintf(str, "Error in page %d '%s' of file '%s'",
 						currPage->id, currPage->name.Value(), filename);
 
 				ReportError(str);
 				delete currPage;
-				return 1;  // Error;
+				return 1;  // Error
 			}
-            if (currPage->id > 100000)
+            else if (currPage->id > 100000) // Invalid page ID
             {
-                snprintf(str, STRLENGTH, "Bad Page ID:  %d", currPage->id);
+                snprintf(str, STRLENGTH, "Invalid page ID (%d); skipped", currPage->id);
                 ReportError(str);
                 delete currPage;
             }
-			else if (Add(currPage))
+			else
 			{
-				ReportError("Error adding page to ZoneDB");
-				delete currPage;
-				return 1;  // Error;
+				// Check that this isn't a system page - not permitted
+				if (currPage->id < 0) {
+					snprintf(str, STRLENGTH, "Bad Page ID:  %d", currPage->id);
+					ReportError("Pages in the System Area (%d) are not permitted"
+						"in config files; skipped");
+					delete currPage;
+					return 1;
+				}
+				// Try to add the page (as unique)
+				int add_result = AddUnique(currPage);
+				if (add_result) // true if add failed
+				{
+					ReportError("Failed to add page to ZoneDB");
+					delete currPage;
+					return 1;  // Error;
+				}
 			}
 		}
     }
@@ -1316,50 +1330,78 @@ int ZoneDB::ExportPage(Page *page)
     return retval;
 }
 
+/**
+ * @brief Adds a page to the zone database. This used to allow duplicate pages
+ * of the same size, but now is a placeholder for AddUnique().
+ * @author Nicholas Turnbull <nick@scimatix.com>
+ * @param p Page
+ * @return true if error, else false
+ */
 int ZoneDB::Add(Page *p)
 {
-    FnTrace("ZoneDB::Add()");
-    if (p == NULL)
-        return 1;
-
-    // start at end of list and work backwords
-    Page *ptr = page_list.Tail();
-    while (ptr && (p->id < ptr->id || (p->id == ptr->id && p->size > ptr->size)))
-        ptr = ptr->fore;
-
-    // Insert p after ptr
-    return page_list.AddAfterNode(ptr, p);
+	FnTrace("ZoneDB::Add()");
+	return AddUnique(p);
 }
 
-int ZoneDB::AddUnique(Page *page)
+/**
+ * @brief Adds a page uniquely to the zone database, removing the original page
+ * if a duplicate exists. The meat of the Add() method has been moved here and
+ * slightly touched up.
+ * @author Nicholas Turnbull <nick@scimatix.com>
+ * @param p Page
+ * @return true if error, else false
+ */
+int ZoneDB::AddUnique(Page *p)
 {
-    FnTrace("ZoneDB::AddUnique()");
-    int retval = 0;
-    Page *oldpage = NULL;
-    int pagenum = page->id;
-    char str[STRLENGTH];
+	FnTrace("ZoneDB::AddUnique()");
+	// Catch null pages
+	if (p == NULL) 
+	{
+		ReportError("Cannot add a null page to the zone database");
+		return true; // Failed
+	}
+	else 
+	{
+		// We're good to go
+		Page *oldpage = NULL;
+		int pagenum = p->id;
+		char str[STRLENGTH];
 
-    // remove a page if there is already one at this ID (of the same size)
-    oldpage = FindByID(pagenum, page->size);
-    if (oldpage != NULL && oldpage->size == page->size)
-    {
-        if (Remove(oldpage))
-        {
-            sprintf(str, "Error removing page %d", pagenum);
-            ReportError(str);
-            return 1;  // Error
-        }   
-    }
-
-    // add the new page in
-    if (Add(page))
-    {
-        sprintf(str, "Error adding page %d", pagenum);
-        ReportError(str);
-        return 1;  // Error
-    }
-
-    return retval;
+		// Remove a page if there is already one at this ID and page size
+		oldpage = FindByID(pagenum, p->size);
+		if (oldpage != NULL && oldpage->size == p->size)
+		{
+			// Perform the remove
+			int remove_error = Remove(oldpage);
+			if (remove_error)
+			{
+				sprintf(str, "Could not remove page %d for replacement", pagenum);
+				ReportError(str);
+				return true;  // Error
+			}   
+		}
+		// Perform insertion - start at end of list and work backwords
+		Page *ptr = page_list.Tail();
+		while (ptr && (p->id < ptr->id || 
+			(p->id == ptr->id && p->size > ptr->size)))
+		{
+			ptr = ptr->fore;
+		}
+		// Insert p after ptr
+		int add_error = page_list.AddAfterNode(ptr, p);
+		
+		// Check for whether it worked
+		if (add_error)
+		{
+			sprintf(str, "Error adding page %d", pagenum);
+			ReportError(str);
+			return true;  // Error
+		}
+		else 
+		{
+			return false; // Success
+		}
+	}
 }
 
 int ZoneDB::Remove(Page *p)
@@ -1490,16 +1532,16 @@ int ZoneDB::IsPageDefined(int my_page_id, int size)
 {
     FnTrace("ZoneDB::IsPageDefined()");
     if (my_page_id == 0)
-        return 0;   // FALSE
+        return 0;   // false
 
     Page *p = page_list.Head();
     while (p)
     {
         if (p->id == my_page_id && p->size == size)
-            return 1; // TRUE
+            return 1; // true
         p = p->next;
     }
-    return 0;     // FALSE
+    return 0;     // false
 }
 
 int ZoneDB::ClearEdit(Terminal *t)
@@ -1997,3 +2039,36 @@ int ZoneDB::PrintZoneDB(const char* dest, int brief)
     return retval;
 }
 
+int ZoneDB::LoadSystemPages(InputDataFile &df, int zone_version, int zone_count)
+{
+	ReportLoader("Loading system pages");
+	int return_error = false;
+	int add_error = false;
+	char msg[256];
+	Page *p = NULL;
+    for (int i = 0; i < zone_count; ++i) 
+	{
+        p = NewPosPage();
+        p->Read(df, zone_version);
+        add_error = Add(p);
+		if (add_error) 
+		{
+			sprintf(msg, "Error occurred in loading system page (ID=%i)", p->id);
+			ReportError(msg);
+			return_error = true;
+		}
+    }
+	return return_error;
+}
+
+int ZoneDB::LoadPagesFromFile(const char* filename)
+{
+	int error = Load(FilenameToPath(filename));
+	if (error) 
+	{
+		genericChar msg[256];
+		sprintf(msg, "Error while loading file %s", filename);
+		ReportError(msg);
+	}
+    return error;
+}

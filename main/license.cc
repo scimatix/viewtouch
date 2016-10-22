@@ -108,8 +108,8 @@ int protocol              = PROTOCOL_VERSION;  // use this for incoming data
 #define MAXKEYSIZE          64       /* max characters in key (subtract 1 for null byte)   */
 #define MAXVALSIZE          256      /* max characters in value (subtract 1 for null byte) */
 #define MACLENGTH           256
-#define DEFAULT_TERMINALS   2
-#define DEFAULT_PRINTERS    2
+#define DEFAULT_TERMINALS   16384
+#define DEFAULT_PRINTERS    16384
 
 struct LicenseData;
 

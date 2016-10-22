@@ -259,27 +259,21 @@ genericChar* GetMachineName(genericChar* str = NULL, int len = STRLENGTH)
     return str;
 }
 
+/**
+ * @brief This method used to check whether the user's license was valid 
+ * and return the number of days before expiry. I have eviscerated it
+ * and replaced it with a stub in case of any reliant calls.
+ * As the licensing functionality has been removed following this software 
+ * being made open source, this always returns the arbitrary number 1000.
+ * @author Nicholas Turnbull <nick@scimatix.com>
+ * @param settings
+ * @param force_check
+ * @return Days remaining of license (always 1000)
+ */
 int CheckLicense(Settings *settings, int force_check)
 {
     FnTrace("CheckLicense()");
-    // bkk: always check the license
-    force_check = 1;
-
-    // Check Licensing
-    // GetExpirationDate() will kill the whole program if we're expired, so
-    // here we just check and report.
-    ReportLoader("Checking License...");
-    int DaysToExpire = GetExpirationDate(settings->license_key, force_check);
-    if (DaysToExpire > 0 && DaysToExpire < 1000)
-    {
-        char buffer[STRLENGTH];
-        snprintf(buffer, STRLENGTH, "You have %d days left on your license", DaysToExpire);
-        printf("%s\n", buffer);
-        ReportLoader(buffer);
-        sleep(1);
-    }
-    settings->expire_days = DaysToExpire;
-    return DaysToExpire;
+    return 1000;
 }
 
 void ViewTouchError(const char* message, int do_sleep)
@@ -484,19 +478,7 @@ int main(int argc, genericChar* argv[])
         MasterSystem->SetDataPath(data_path);
     else
         MasterSystem->SetDataPath(VIEWTOUCH_PATH "/dat");
-    // Check for updates from server if not disabled
-    if (autoupdate)
-    {
-        ReportError("Automatic check for updates...");
-	unlink(VIEWTOUCH_UPDATE_COMMAND);	// out with the old
-    	system(VIEWTOUCH_UPDATE_REQUEST);	// in with the new
-	chmod(VIEWTOUCH_UPDATE_COMMAND, 0755);	// set executable
-	// try to run it, giving build-time base path
-	system(VIEWTOUCH_UPDATE_COMMAND " " VIEWTOUCH_PATH);	
-    }
-    // Now process any locally available updates (updates
-    // from the previous step will be installed and ready for
-    // this step).
+    // Now process any locally available updates
     MasterSystem->CheckFileUpdates();
     if (purge)
         MasterSystem->ClearSystem();
@@ -516,7 +498,6 @@ int main(int argc, genericChar* argv[])
 int ReportError(const char* message)
 {
     FnTrace("ReportError()");
-    fprintf(stderr, "%s\n", message);
     genericChar str[256];
     if (MasterSystem)
         sprintf(str, "%s/error_log.txt", MasterSystem->data_path.Value());
@@ -524,26 +505,40 @@ int ReportError(const char* message)
         strcpy(str, VIEWTOUCH_PATH "/dat/error_log.txt");
 
     FILE *fp = fopen(str, "a");
-    if (fp == NULL)
-        return 1;  // Error creating error log
-
-    TimeInfo timevar;
-    timevar.Set();
-    fprintf(fp, "[%02d/%02d/%02d %2d:%02d] %s\n", timevar.Month(), timevar.Day(),
-            timevar.Year() % 100, timevar.Hour(), timevar.Min(), message);
-
+	fprintf(fp, "%s", FormatPrintLine(true, message));
     fclose(fp);
     return 0;
+}
+
+char* FormatPrintLine(int error, const char* message)
+{
+	static char out[256];
+	TimeInfo timevar;
+    timevar.Set();
+	
+	const char* typestr;
+	if (error == true) {
+		typestr = TYPESTR_ERROR;
+	}
+	else {
+		typestr = TYPESTR_INFO;
+	}
+	
+    sprintf(out, "[%02d/%02d/%02d %2d:%02d] %s %s\n", timevar.Month(), timevar.Day(),
+		timevar.Year() % 100, timevar.Hour(), timevar.Min(), typestr, message);
+    fprintf(stderr, "%s", out);
+	if (LoaderSocket > 0) 
+	{
+		write(LoaderSocket, out, strlen(out)+1);
+	}
+	return out;
 }
 
 int ReportLoader(const char* message)
 {
     FnTrace("ReportLoader()");
-    if (LoaderSocket == 0)
-        return 1;
-
-    write(LoaderSocket, message, strlen(message)+1);
-    return 0;
+	FormatPrintLine(false, message);
+	return 1;
 }
 
 void Terminate(int my_signal)
@@ -552,13 +547,13 @@ void Terminate(int my_signal)
     switch (my_signal)
     {
     case SIGINT:
-        fprintf(stderr, "\n** Control-C pressed - System Terminated **\n");
+        ReportError("Ctrl-C pressed; system terminated");
         FnPrintTrace();
         exit(0);
         break;
 
     case SIGILL:
-        ReportError("Illegal instruction");
+        ReportError("Illegal instruction.");
         break;
     case SIGFPE:
         ReportError("Floating point exception");
@@ -570,19 +565,18 @@ void Terminate(int my_signal)
         ReportError("Memory segmentation violation");
         break;
     case SIGPIPE:
-        ReportError("Broken Pipe");
+        ReportError("Broken pipe");
         break;
-
     default:
-    {
-        genericChar str[256];
-        sprintf(str, "Unknown my_signal %d received (ignored)", my_signal);
-        ReportError(str);
-        return;
-    }
+		{
+			genericChar str[256];
+			sprintf(str, "Unknown my_signal %d received (ignored).", my_signal);
+			ReportError(str);
+			return;
+		}
     }
 
-    ReportError("** Fatal Error - Terminating System **");
+    ReportError("Fatal error; terminating system.");
     FnPrintTrace();
     exit(1);
 }
@@ -617,8 +611,8 @@ int StartSystem(int my_use_net)
     sys->release.Year(ReleaseYear);
     if (SystemTime <= sys->release)
     {
-        printf("\nYour computer clock is in error.\n");
-        printf("Please correct your system time before starting again.\n");
+        ReportError("\nYour computer clock is in error.\n"
+			"Please correct your system time before starting again.\n");
         return 1;
     }
 
@@ -633,12 +627,11 @@ int StartSystem(int my_use_net)
         EndSystem();
     }
 
-    sprintf(str, "Starting System on %s", GetMachineName());
-    printf("Starting system:  %s\n", GetMachineName());
+    sprintf(str, "Starting system on %s", GetMachineName());
     ReportLoader(str);
 
     // Load Phrase Translation
-    ReportLoader("Loading Locale Settings");
+    ReportLoader("Loading locale settings");
     sys->FullPath(MASTER_LOCALE, str);
     MasterLocale = new Locale;
     if (MasterLocale->Load(str))
@@ -649,7 +642,7 @@ int StartSystem(int my_use_net)
     }
 
     // Load Settings
-    ReportLoader("Loading General Settings");
+    ReportLoader("Loading general settings");
     Settings *settings = &sys->settings;
     sys->FullPath(MASTER_SETTINGS, str);
     if (settings->Load(str))
@@ -660,7 +653,6 @@ int StartSystem(int my_use_net)
         sys->account_db.low_acct_num = settings->low_acct_num;
         sys->account_db.high_acct_num = settings->high_acct_num;
     }
-    CheckLicense(settings);
     settings->Save();
     // Create alternate media file for old archives if it does not already exist
     sys->FullPath(MASTER_DISCOUNT_SAVE, altmedia);
@@ -723,7 +715,7 @@ int StartSystem(int my_use_net)
     KillTask("vt_print");
 
     // Load System Data
-    ReportLoader("Loading Application Data");
+    ReportLoader("Loading application data");
     LoadSystemData();
 
     // Add Remote terminals
@@ -777,14 +769,14 @@ int StartSystem(int my_use_net)
                 {
                     sprintf(str, "Opening Remote Display '%s'", ti->name.Value());
                     ReportLoader(str);
-                    ReportError(str);
                     ti->OpenTerm(MasterControl);
                     if (ti->next)
                         sleep(OPENTERM_SLEEP);
                 }
                 else
                 {
-                    printf("Not licensed to run terminal '%s'\n", ti->name.Value());
+                    sprintf(str, "Not licensed to run terminal '%s'\n", ti->name.Value());
+					ReportLoader(str);
                 }
             }
             else if (have_server == 0)
@@ -800,70 +792,62 @@ int StartSystem(int my_use_net)
 	char msg[256]; //char string used for file load messages
 
     // Load Archive & Create System Object
-    ReportLoader("Scanning Archives");
+    ReportLoader("Scanning archives");
     sys->FullPath(ARCHIVE_DATA_DIR, str);
     sys->FullPath(MASTER_DISCOUNT_SAVE, altmedia);
     if (sys->ScanArchives(str, altmedia))
         ReportError("Can't scan archives");
 
     // Load Employees
-	sprintf(msg, "Attempting to load file %s...", MASTER_USER_DB);
-	ReportError(msg); //stamp file attempt in log
-    ReportLoader("Loading Employees");
     sys->FullPath(MASTER_USER_DB, str);
+	ReportLoader("Loading employees");
     if (sys->user_db.Load(str))
     {
         RestoreBackup(str);
         sys->user_db.Purge();
         sys->user_db.Load(str);
     }
+	else {
+		sprintf(msg, "Failed to load file %s", MASTER_USER_DB);
+		ReportError(msg); //stamp file attempt in log
+	}
     // set developer key (this should be done somewhere else)
     sys->user_db.developer->key = settings->developer_key;
-	sprintf(msg, "%s OK", MASTER_USER_DB);
-	ReportError(msg); //stamp file attempt in log
 
     // Load Labor
-    sprintf(msg, "Attempting to load labor info...");
+    sprintf(msg, "Loading labor info");
     ReportLoader(msg);
     sys->FullPath(LABOR_DATA_DIR, str);
-    if (sys->labor_db.Load(str))
+    if (sys->labor_db.Load(str)) 
+	{
         ReportError("Can't find labor directory");
+	}
 
     // Load Menu
-	sprintf(msg, "Attempting to load file %s...", MASTER_MENU_DB);
-	ReportError(msg); //stamp file attempt in log
-    ReportLoader("Loading Menu");
+	sprintf(msg, "Loading menu");
     sys->FullPath(MASTER_MENU_DB, str);
     if (sys->menu.Load(str))
     {
+		ReportError("Failed to load menu file");
         RestoreBackup(str);
         sys->menu.Purge();
         sys->menu.Load(str);
     }
-	sprintf(msg, "%s OK", MASTER_MENU_DB);
-	ReportError(msg); //stamp file attempt in log
-
-    // Load Exceptions
-	sprintf(msg, "Attempting to load file %s...", MASTER_EXCEPTION);
-	ReportError(msg); //stamp file attempt in log
-    ReportLoader("Loading Exception Records");
+	ReportLoader("Loading exception records");
     sys->FullPath(MASTER_EXCEPTION, str);
     if (sys->exception_db.Load(str))
     {
+		ReportError("Failed to load exception file; attempting restore");
         RestoreBackup(str);
         sys->exception_db.Purge();
         sys->exception_db.Load(str);
     }
-	sprintf(msg, "%s OK", MASTER_EXCEPTION);
-	ReportError(msg); //stamp file attempt in log
-
     // Load Inventory
-	sprintf(msg, "Attempting to load file %s...", MASTER_INVENTORY);
-	ReportError(msg); //stamp file attempt in log
-    ReportLoader("Loading Inventory");
+    ReportLoader("Loading inventory");
     sys->FullPath(MASTER_INVENTORY, str);
     if (sys->inventory.Load(str))
     {
+		ReportError("Failed to load exception file; attempting restore");
         RestoreBackup(str);
         sys->inventory.Purge();
         sys->inventory.Load(str);
@@ -871,36 +855,35 @@ int StartSystem(int my_use_net)
     sys->inventory.ScanItems(&sys->menu);
     sys->FullPath(STOCK_DATA_DIR, str);
     sys->inventory.LoadStock(str);
-	sprintf(msg, "%s OK", MASTER_INVENTORY);
-	ReportError(msg); //stamp file attempt in log
 
     // Load Customers
     sys->FullPath(CUSTOMER_DATA_DIR, str);
-    ReportLoader("Loading Customers");
+    ReportLoader("Loading customers");
     sys->customer_db.Load(str);
 
     // Load Checks & Drawers
     sys->FullPath(CURRENT_DATA_DIR, str);
-    ReportLoader("Loading Current Checks & Drawers");
+    ReportLoader("Loading current checks and drawers");
     sys->LoadCurrentData(str);
 
     // Load Accounts
     sys->FullPath(ACCOUNTS_DATA_DIR, str);
-    ReportLoader("Loading Accounts");
+    ReportLoader("Loading accounts");
     sys->account_db.Load(str);
 
     // Load Expenses
     sys->FullPath(EXPENSE_DATA_DIR, str);
-    ReportLoader("Loading Expenses");
+    ReportLoader("Loading expenses");
     sys->expense_db.Load(str);
     sys->expense_db.AddDrawerPayments(sys->DrawerList());
 
+	ReportLoader("Loading Customer Display Unit (CDU) text");
     // Load Customer Display Unit strings
     sys->FullPath(MASTER_CDUSTRING, str);
     sys->cdustrings.Load(str);
 
     // Load Credit Card Exceptions, Refunds, and Voids
-    ReportLoader("Loading Credit Card Information");
+    ReportLoader("Loading Credit Card information");
     sys->cc_exception_db->Load(MASTER_CC_EXCEPT);
     sys->cc_refund_db->Load(MASTER_CC_REFUND);
     sys->cc_void_db->Load(MASTER_CC_VOID);
@@ -1016,7 +999,7 @@ int EndSystem()
     ++flag;
     if (flag == 2)
     {
-        ReportError("Terminating without clean up - fatal error!");
+        ReportError("Terminating without clean up - fatal error.");
         exit(0);
     }
     else if (flag >= 3)
@@ -1032,7 +1015,7 @@ int EndSystem()
                 term->cdu->Clear();
             term = term->next;
         }
-        MasterControl->SetAllMessages("Shutting Down.");
+        MasterControl->SetAllMessages("Shutting down");
         MasterControl->SetAllCursors(CURSOR_WAIT);
         MasterControl->LogoutAllUsers();
     }
@@ -1258,13 +1241,13 @@ int FindVTData(InputDataFile *infile)
     int version = -1;
 
     // try official location
-    fprintf(stderr, "Trying VT_DATA: %s\n", SYSTEM_DATA_FILE);
+    //fprintf(stderr, "Trying VT_DATA: %s\n", SYSTEM_DATA_FILE);
     if (infile->Open(SYSTEM_DATA_FILE, version) == 0)
         return version;
 
     // fallback, try current data path
     const char *vt_data_path = MasterSystem->FullPath("vt_data");
-    fprintf(stderr, "Trying VT_DATA: %s\n", vt_data_path);
+    //fprintf(stderr, "Trying VT_DATA: %s\n", vt_data_path);
     if (infile->Open(vt_data_path, version) == 0)
         return version;
 
@@ -1282,7 +1265,7 @@ int LoadSystemData()
     Control *con = MasterControl;
     if (con->zone_db)
     {
-        ReportError("system data already loaded");
+        ReportError("System data already loaded");
         return 1;
     }
 
@@ -1291,7 +1274,7 @@ int LoadSystemData()
     version = FindVTData(&df);
     if (version < 0)
     {
-        fprintf(stderr, "Unable to find vt_data file!!!\n");
+        ReportError("Unable to find vt_data file");
         return 1;
     }
 
@@ -1302,23 +1285,21 @@ int LoadSystemData()
     }
 
     // Read System Page Data
-    Page *p = NULL;
-    int zone_version = 0, count = 0;
-    ZoneDB *zone_db = new ZoneDB;
+    int zone_version = 0;
+	int zone_count = 0;
+    con->zone_db = new ZoneDB;
     df.Read(zone_version);
-    df.Read(count);
-    for (i = 0; i < count; ++i)
-    {
-        p = NewPosPage();
-        p->Read(df, zone_version);
-        zone_db->Add(p);
-    }
+    df.Read(zone_count);
 
+	// Initialise the zone DB from file
+	int zonedb_error = con->zone_db->LoadSystemPages(df, zone_version, zone_count);
+
+	ReportLoader("Loading default accounts data...");
     // Read Default Accounts Data
     Account *ac;
     int account_version = 0;
     int no = 0;
-    count = 0;
+    int count = 0;
     df.Read(account_version);
     df.Read(count);
     for (i = 0; i < count; ++i)
@@ -1329,43 +1310,58 @@ int LoadSystemData()
         sys->account_db.AddDefault(ac);
     }
 
-    // Done with vt_data file
-    df.Close();
-
-    // Load Tables
-    genericChar filename1[256];
-    sprintf(filename1, "%s/%s", sys->data_path.Value(), MASTER_ZONE_DB1);
-
-    if (zone_db->Load(filename1))
-    {
-        RestoreBackup(filename1);
-        //zone_db->Purge();	// maybe remove non-system pages, but not all!
-        zone_db->Load(filename1);
-    }
-
-    // Load Menu
-    genericChar filename2[256];
-    sprintf(filename2, "%s/%s", sys->data_path.Value(), MASTER_ZONE_DB2);
-    if (zone_db->Load(filename2))
-    {
-        RestoreBackup(filename2);
-        //zone_db->Purge();
-        zone_db->Load(filename1);
-        zone_db->Load(filename2);
-    }
-
+    // Load tables and menu - try again if it fails
+	ReportLoader("Loading tables and menu files");
+	int error_db1 = con->zone_db->LoadPagesFromFile(MASTER_ZONE_DB1);
+	int error_db2 = con->zone_db->LoadPagesFromFile(MASTER_ZONE_DB2);
+	int error_restore = false;
+	if (error_db1 | error_db2)  // If db issues
+	{
+		// -- Attempt a fix
+		// BOTH files must be restored from backup together if faulty
+		// Even if backup restore fails, no harm in carrying on for second try.
+		ReportError("Error occurred; attempting backup restore");
+		error_restore |= RestoreBackup(FilenameToPath(MASTER_ZONE_DB1));
+		error_restore |= RestoreBackup(FilenameToPath(MASTER_ZONE_DB2));
+		con->zone_db->Purge(); // Clear the zone DB in case of incomplete loads
+		// Now reload it, even if we got an error before. Note that we don't copy
+		// it in case there was something peculiar going on.
+		error_restore |= con->zone_db->LoadSystemPages(df, zone_version, zone_count);
+		if (error_restore) {
+			ReportError("Backup and retry may not have worked. Contact your Support Provider.");
+		}
+		else {
+			ReportLoader("Successful recovery from backup.");
+		}
+	}
+	else 
+	{
+		ReportLoader("Page files loaded successfully.");
+	}
+	
     con->master_copy = 0;
-    con->zone_db = zone_db;
 
     // Load any new imports
-    if (zone_db->ImportPages() > 0)
+    if (con->zone_db->ImportPages() > 0)
     {
         // SaveSystemData(); // disabled, only save on edit now
         con->SaveMenuPages();
         con->SaveTablePages();
     }
 
+    // Done with vt_data file
+    df.Close();
+
     return 0;
+}
+
+
+
+char* FilenameToPath(const char* filename)
+{
+	static genericChar path[256];
+	sprintf(path, "%s/%s", MasterSystem->data_path.Value(), filename);
+	return path;
 }
 
 int SaveSystemData()
@@ -2536,8 +2532,6 @@ void UpdateSystemCB(XtPointer client_data, XtIntervalId *time_id)
     {
         if (LastDay != -1)
         {
-            ReportError("UpdateSystemCB checking license");
-            CheckLicense(settings);
             settings->Save();
         }
         LastDay = day;
@@ -2563,15 +2557,6 @@ void UpdateSystemCB(XtPointer client_data, XtIntervalId *time_id)
         int hour = SystemTime.Hour();
         if (LastHour != hour)
         {
-            if (sys->expire.IsSet() && SystemTime >= sys->expire)
-            {
-    		static int license_message = 0;	// only complain once
-		if (!license_message)
-		{
-                    ReportError("Setting legacy expire");
-                    license_message = 1;
-		}
-            }
             LastHour = hour;
             update |= UPDATE_HOUR;
         }
